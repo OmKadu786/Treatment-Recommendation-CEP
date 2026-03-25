@@ -1465,9 +1465,9 @@ function Analytics({ history }) {
 
       <div className="stats-row">
         {[
-          { label: "Average Score", val: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length), icon: "📊" },
-          { label: "Peak Score", val: Math.max(...scores), icon: "📈" },
-          { label: "Score Δ (6 months)", val: `+${scores[scores.length - 1] - scores[0]}`, icon: "📉" },
+          { label: "Average Score", val: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0, icon: "📊" },
+          { label: "Peak Score", val: scores.length ? Math.max(...scores) : 0, icon: "📈" },
+          { label: "Score Δ (Latest)", val: scores.length > 1 ? (scores[scores.length - 1] - scores[0] > 0 ? '+' : '') + (scores[scores.length - 1] - scores[0]) : 0, icon: "📉" },
           { label: "Months Tracked", val: history.length * 2, icon: "🗓" }
         ].map((s, i) => (
           <div className="stat-card" key={i}>
@@ -1920,17 +1920,17 @@ export default function App() {
       await supabase.from('profiles').upsert({ id: userId }).select();
       
       const { data, error } = await supabase
-        .from('ipss_history')
+        .from('ipss_assessments')
         .select('*')
         .eq('user_id', userId)
-        .order('taken_at', { ascending: false });
+        .order('created_at', { ascending: false });
         
       if (!error && data) {
         const formatted = data.map(row => ({
           score: row.total_score,
-          severity: row.severity_category.toLowerCase(),
+          severity: row.severity.toLowerCase(),
           qol: ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'][row.q8_quality_of_life] || "Mixed",
-          date: new Date(row.taken_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+          date: new Date(row.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
           answers: {
              0: row.q1_incomplete_emptying,
              1: row.q2_frequency,
@@ -1971,6 +1971,7 @@ export default function App() {
 
   const handleAssessmentComplete = async (result) => {
     // result.answers contains 0-6 index answers Map to our api payload
+    const qolIndex = ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'].indexOf(result.qol);
     const payload = {
       q1_incomplete_emptying: result.answers[0],
       q2_frequency: result.answers[1],
@@ -1978,7 +1979,8 @@ export default function App() {
       q4_urgency: result.answers[3],
       q5_weak_stream: result.answers[4],
       q6_straining: result.answers[5],
-      q7_nocturia: result.answers[6]
+      q7_nocturia: result.answers[6],
+      q8_quality_of_life: qolIndex > -1 ? qolIndex : 3
     };
 
     try {
@@ -2000,24 +2002,7 @@ export default function App() {
       setHistory(prev => [properResult, ...prev]);
 
       // Save to Supabase
-      if (user?.id) {
-         // Map QOL string to index (0-defaulting)
-         const qolIndex = ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'].indexOf(result.qol);
-         await supabase.from('ipss_history').insert({
-            user_id: user.id,
-            q1_incomplete_emptying: result.answers[0],
-            q2_frequency: result.answers[1],
-            q3_intermittency: result.answers[2],
-            q4_urgency: result.answers[3],
-            q5_weak_stream: result.answers[4],
-            q6_straining: result.answers[5],
-            q7_nocturia: result.answers[6],
-            q8_quality_of_life: qolIndex > -1 ? qolIndex : 3,
-            total_score: data.totalScore,
-            severity_category: data.severity
-         });
-      }
-
+      // Note: Insertion into ipss_assessments and treatment_recommendations is handled entirely within the 'calculate-ipss' edge function!
     } catch (err) {
       alert("Error calculating IPSS: " + err.message);
     }
