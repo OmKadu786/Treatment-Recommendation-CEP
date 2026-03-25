@@ -14,7 +14,7 @@ interface Pathway {
     note?: string;
 }
 
-const getTreatmentRecommendations = (severity: string) => {
+const getTreatmentRecommendations = (severity: string, answers: Record<string, number>) => {
     const DISCLAIMER = "DISCLAIMER: This system is for informational purposes only and does not constitute medical advice. Please consult with a certified urologist before making any treatment decisions.";
     
     const recommendations = {
@@ -22,6 +22,20 @@ const getTreatmentRecommendations = (severity: string) => {
         clinical_consultation_required: false,
         recommended_pathways: [] as Pathway[]
     };
+
+    // ────────────────────────────────────────────────────────
+    // PROPRIETARY ALGORITHM: MULTIVARIATE SUB-SCORE ANALYSIS
+    // This is the core patentable logic distinguishing the tool 
+    // from standard linear calculators.
+    // ────────────────────────────────────────────────────────
+    const storageSymptomScore = answers.q2_frequency + answers.q4_urgency + answers.q7_nocturia;
+    const voidingSymptomScore = answers.q1_incomplete_emptying + answers.q3_intermittency + answers.q5_weak_stream + answers.q6_straining;
+    
+    // Anomaly Check 1: Storage dominance (OAB overlap)
+    const isStorageDominant = storageSymptomScore > voidingSymptomScore && storageSymptomScore >= 8;
+    
+    // Anomaly Check 2: Severe Nocturia outlier
+    const hasSevereNocturia = answers.q7_nocturia >= 4;
 
     switch (severity) {
         case 'Mild':
@@ -44,6 +58,24 @@ const getTreatmentRecommendations = (severity: string) => {
             ];
             break;
     }
+
+    // Inject advanced logic modifying the standard AUA/EAU pathways
+    if (isStorageDominant) {
+        recommendations.recommended_pathways.unshift({
+            category: "Targeted OAB Pathway",
+            options: ["Anticholinergics", "Beta-3 Agonists"],
+            note: "PROPRIETARY ALERT: Sub-score analysis detected dominant storage vs. voiding symptoms. Rule out primary Overactive Bladder (OAB) before proceeding with mechanical MIST procedures."
+        });
+    }
+
+    if (hasSevereNocturia) {
+        recommendations.recommended_pathways.push({
+            category: "Severe Nocturia Management",
+            options: ["Strict evening fluid restriction", "Desmopressin assessment", "Sleep apnea screening"],
+            note: "Patient reported waking ≥ 4 times/night. Must rule out nocturnal polyuria independent of BPH."
+        });
+    }
+
     return recommendations;
 };
 
@@ -86,7 +118,7 @@ serve(async (req: Request) => {
 
     if (dbErr1) throw dbErr1
 
-    const recs = getTreatmentRecommendations(severity);
+    const recs = getTreatmentRecommendations(severity, answers);
 
     const { error: dbErr2 } = await supabaseAdmin
       .from('treatment_recommendations')
