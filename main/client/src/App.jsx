@@ -898,13 +898,7 @@ const TREATMENTS = {
 // ─────────────────────────────────────────────
 // MOCK DATA
 // ─────────────────────────────────────────────
-const MOCK_HISTORY = [
-  { date: "Mar 12, 2026", score: 24, severity: "severe", qol: "Unhappy" },
-  { date: "Jan 5, 2026", score: 21, severity: "severe", qol: "Mostly dissatisfied" },
-  { date: "Nov 18, 2025", score: 18, severity: "moderate", qol: "Mixed" },
-  { date: "Aug 30, 2025", score: 14, severity: "moderate", qol: "Mostly dissatisfied" },
-  { date: "Jun 14, 2025", score: 10, severity: "moderate", qol: "Mixed" },
-];
+// Mock history removed in favor of real Supabase data
 
 const INITIAL_FAQS = [
   { q: "What is BPH?", a: "Benign Prostatic Hyperplasia (BPH) is a non-cancerous enlargement of the prostate gland that can obstruct urine flow, commonly affecting men over 50.", freq: 47, expanded: false },
@@ -1918,18 +1912,56 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("dashboard");
   const [assessmentResult, setAssessmentResult] = useState(null);
-  const [history, setHistory] = useState(MOCK_HISTORY);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
+    const fetchHistory = async (userId) => {
+      // Upsert profile just in case it's missing (satisfies foreign key)
+      await supabase.from('profiles').upsert({ id: userId }).select();
+      
+      const { data, error } = await supabase
+        .from('ipss_history')
+        .select('*')
+        .eq('user_id', userId)
+        .order('taken_at', { ascending: false });
+        
+      if (!error && data) {
+        const formatted = data.map(row => ({
+          score: row.total_score,
+          severity: row.severity_category.toLowerCase(),
+          qol: ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'][row.q8_quality_of_life] || "Mixed",
+          date: new Date(row.taken_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+          answers: {
+             0: row.q1_incomplete_emptying,
+             1: row.q2_frequency,
+             2: row.q3_intermittency,
+             3: row.q4_urgency,
+             4: row.q5_weak_stream,
+             5: row.q6_straining,
+             6: row.q7_nocturia
+          }
+        }));
+        setHistory(formatted);
+      }
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthed(!!session);
-      if (session) setUser({ email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
+      if (session) {
+        setUser({ id: session.user.id, email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
+        fetchHistory(session.user.id);
+      }
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setAuthed(!!session);
-      if (session) setUser({ email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
-      else setUser(null);
+      if (session) {
+        setUser({ id: session.user.id, email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
+        fetchHistory(session.user.id);
+      } else {
+        setUser(null);
+        setHistory([]);
+      }
     });
 
     return () => {
@@ -1966,6 +1998,26 @@ export default function App() {
       
       setAssessmentResult(properResult);
       setHistory(prev => [properResult, ...prev]);
+
+      // Save to Supabase
+      if (user?.id) {
+         // Map QOL string to index (0-defaulting)
+         const qolIndex = ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'].indexOf(result.qol);
+         await supabase.from('ipss_history').insert({
+            user_id: user.id,
+            q1_incomplete_emptying: result.answers[0],
+            q2_frequency: result.answers[1],
+            q3_intermittency: result.answers[2],
+            q4_urgency: result.answers[3],
+            q5_weak_stream: result.answers[4],
+            q6_straining: result.answers[5],
+            q7_nocturia: result.answers[6],
+            q8_quality_of_life: qolIndex > -1 ? qolIndex : 3,
+            total_score: data.totalScore,
+            severity_category: data.severity
+         });
+      }
+
     } catch (err) {
       alert("Error calculating IPSS: " + err.message);
     }
