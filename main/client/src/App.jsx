@@ -1327,24 +1327,25 @@ IMPORTANT RULES:
 5. Be warm, professional, and reassuring.`;
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: [
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [
             ...messages.filter(m => m.role !== "bot" || messages.indexOf(m) !== 0).map(m => ({
-              role: m.role === "bot" ? "assistant" : "user",
-              content: m.text
+              role: m.role === "bot" ? "model" : "user",
+              parts: [{ text: m.text }]
             })),
-            { role: "user", content: userText }
-          ]
+            { role: "user", parts: [{ text: userText }] }
+          ],
+          generationConfig: { maxOutputTokens: 1000 }
         })
       });
       const data = await response.json();
-      const botText = data.content?.[0]?.text || "I apologize, I couldn't process that request. Please try again.";
+      if (data.error) throw new Error(data.error.message);
+      
+      const botText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I apologize, I couldn't process that request. Please try again.";
       setMessages(prev => [...prev, { role: "bot", text: botText, disclaimer: false }]);
     } catch {
       setMessages(prev => [...prev, {
