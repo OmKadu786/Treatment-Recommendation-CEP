@@ -2004,7 +2004,7 @@ function AuthPage({ onLogin }) {
           options: { data: { full_name: form.name } }
         });
         if (error) throw error;
-        alert("Check your email for the confirmation link! (Or if email auth is off, you're logged in!)");
+        alert("Account Created!");
       }
     } catch (error) {
       alert(error.message);
@@ -2060,8 +2060,13 @@ function AuthPage({ onLogin }) {
             {mode === "login" ? "Sign In →" : "Create Account →"}
           </button>
 
-          <div style={{ marginTop: 16, fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
-            Demo: click to enter without credentials
+          <div style={{ display: "flex", gap: 8, flexDirection: "column", marginBottom: 24 }}>
+            <button className="btn btn-outline" style={{ justifyContent: "center" }} onClick={() => { setForm({email: "patient@mist.com", password: "patientpassword"}); setMode("login"); }}>
+              Patient Demo Login
+            </button>
+            <button className="btn btn-outline" style={{ justifyContent: "center" }} onClick={() => { setForm({email: "doctor@mist.com", password: "doctorpassword"}); setMode("login"); }}>
+              Doctor / Admin Demo Login
+            </button>
           </div>
         </div>
       </div>
@@ -2081,11 +2086,12 @@ export default function App() {
   const [assessmentResult, setAssessmentResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, id: null });
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   useEffect(() => {
-    const fetchHistory = async (userId) => {
-      // Upsert profile just in case it's missing (satisfies foreign key)
-      await supabase.from('profiles').upsert({ id: userId }).select();
+    const fetchHistory = async (userId, userRole) => {
+      // Upsert profile just in case it's missing, securely syncing their role for the newly created RLS policies!
+      await supabase.from('profiles').upsert({ id: userId, role: userRole }).select();
       
       const { data, error } = await supabase
         .from('ipss_assessments')
@@ -2117,8 +2123,18 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthed(!!session);
       if (session) {
-        setUser({ id: session.user.id, email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
-        fetchHistory(session.user.id);
+        const email = session.user.email;
+        let role = "patient";
+        if (email.includes("doctor")) role = "doctor";
+        if (email.includes("admin")) role = "admin";
+        
+        setUser({ 
+          id: session.user.id, 
+          email: session.user.email, 
+          name: session.user.user_metadata?.full_name || role.toUpperCase(),
+          role 
+        });
+        fetchHistory(session.user.id, role);
       }
     });
 
@@ -2208,7 +2224,7 @@ export default function App() {
     </>
   );
 
-  const NAV = [
+  let NAV = [
     { id: "dashboard", label: "Dashboard", icon: "📊", section: "overview" },
     { id: "assessment", label: "IPSS Assessment", icon: "📋", section: "assessment" },
     { id: "treatments", label: "Treatments", icon: "💊", section: "assessment" },
@@ -2320,9 +2336,26 @@ export default function App() {
               <div className="top-bar-title">{pageTitles[page]?.title}</div>
               <div className="top-bar-subtitle">{pageTitles[page]?.sub}</div>
             </div>
-            <div className="user-chip">
-              <div className="user-avatar">{(user?.name || "P")[0]}</div>
-              {user?.name || "Patient"}
+            <div className="user-chip" style={{ position: "relative", cursor: "pointer", userSelect: "none" }} onClick={() => setShowProfileMenu(prev => !prev)}>
+              <div className="user-avatar" style={{ background: user?.role === 'patient' ? "var(--cobalt)" : "var(--severe)", color: "white" }}>
+                {(user?.name || "P")[0]}
+              </div>
+              <span style={{ fontWeight: 600 }}>{user?.name || "Patient"}</span>
+              <span style={{ marginLeft: 8, fontSize: 10, background: "rgba(255,255,255,0.15)", padding: "4px 8px", borderRadius: 6, textTransform: "uppercase", fontWeight: 700, letterSpacing: 0.5 }}>
+                {user?.role}
+              </span>
+
+              {showProfileMenu && (
+                <div style={{ position: "absolute", top: "calc(100% + 12px)", right: 0, width: 240, background: "white", borderRadius: 16, boxShadow: "0 16px 40px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.05)", border: "1px solid var(--glass-border)", padding: "12px 8px", zIndex: 1000, display: "flex", flexDirection: "column", color: "var(--text-main)", cursor: "default" }} onClick={(e) => e.stopPropagation()}>
+                   <div style={{ padding: "4px 12px 12px", borderBottom: "1px solid var(--sys-bg)", marginBottom: 8 }}>
+                     <div style={{ fontWeight: 700, fontSize: 16 }}>{user?.name}</div>
+                     <div style={{ fontSize: 13, color: "var(--text-sec)", wordBreak: "break-all", opacity: 0.8, marginTop: 2 }}>{user?.email}</div>
+                   </div>
+                   <button className="btn btn-outline" style={{ background: "transparent", border: "none", width: "100%", justifyContent: "flex-start", padding: "10px 12px", fontSize: 14, color: "var(--severe)", fontWeight: 600 }} onClick={() => supabase.auth.signOut()}>
+                     🚪 Sign Out
+                   </button>
+                </div>
+              )}
             </div>
           </div>
 
