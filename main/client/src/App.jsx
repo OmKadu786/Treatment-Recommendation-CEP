@@ -1379,11 +1379,36 @@ IMPORTANT RULES:
 5. Be warm, professional, and reassuring.`;
 
     try {
+      // --- RAG PIPELINE: Step 1. Get embedding for the user's query
+      const embedResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "models/text-embedding-004", content: { parts: [{ text: userText }] } })
+      });
+      const embedData = await embedResponse.json();
+      const queryEmbedding = embedData.embedding?.values;
+      
+      // --- RAG PIPELINE: Step 2. Search Vector Database
+      let ragContext = "No immediate clinical context was fetched.";
+      if (queryEmbedding) {
+        const { data: chunks, error } = await supabase.rpc('match_knowledge_base', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.65,
+          match_count: 4
+        });
+        
+        if (!error && chunks && chunks.length > 0) {
+          ragContext = chunks.map(c => `[Source URL: ${c.url || "Internal Knowledge Base"}]\n${c.content}`).join("\n\n---\n\n");
+        }
+      }
+
+      // --- RAG PIPELINE: Step 3. Augment System Prompt
+      const dynamicSystemPrompt = `${systemPrompt}\n\n====================\n🔍 RETRIEVED CLINICAL KNOWLEDGE BASE CONTEXT:\n${ragContext}\n\nInstructions: Use the retrieved knowledge base context to specifically ground and shape your answer accurately. Do NOT hallucinate medical statistics. If the context does not contain the exact answer, answer conversationally but rely on your foundational clinical guidelines training.\n====================`;
+
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
+          systemInstruction: { parts: [{ text: dynamicSystemPrompt }] },
           contents: [
             ...messages.filter(m => m.role !== "bot" || messages.indexOf(m) !== 0).map(m => ({
               role: m.role === "bot" ? "model" : "user",
