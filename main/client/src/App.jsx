@@ -415,7 +415,13 @@ const css = `
   }
 
   /* ── CHATBOT ── */
-  .chat-layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; align-items: start; }
+  .chat-layout { display: grid; grid-template-columns: 240px 1fr 340px; gap: 24px; align-items: start; height: calc(100vh - 160px); }
+  .history-sidebar { background: rgba(255,255,255,0.7); backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 8px; height: 100%; overflow-y: auto; }
+  .history-item { cursor: pointer; padding: 12px; border-radius: 12px; transition: all 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--text-sec); border: 1px solid transparent; display: flex; justify-content: space-between; align-items: center; }
+  .history-item:hover { background: rgba(0,0,0,0.03); }
+  .history-item.active { background: #fff; border-color: var(--glass-border); color: var(--text-main); font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+  .global-chat-fab { position: fixed; bottom: 32px; right: 32px; width: 64px; height: 64px; border-radius: 32px; background: var(--cobalt); color: white; display: flex; align-items: center; justify-content: center; font-size: 28px; box-shadow: 0 8px 24px rgba(39,94,254,0.4); cursor: pointer; transition: all 0.3s; z-index: 1000; border: none; outline: none; }
+  .global-chat-fab:hover { transform: scale(1.05) translateY(-4px); box-shadow: 0 12px 32px rgba(39,94,254,0.5); }
 
   .chat-window {
     background: white;
@@ -1308,8 +1314,54 @@ function IPSSResult({ result, onRetake }) {
 }
 
 // ── AI CHATBOT ──
-function ChatBot({ onFAQUpdate }) {
-  const [messages, setMessages] = useState(INITIAL_CHAT);
+function ChatBot({ history }) {
+  const [conversations, setConversations] = useState(() => {
+    try {
+      const saved = localStorage.getItem("mist_ai_conversations");
+      return saved ? JSON.parse(saved) : [{ id: 1, title: "New Consultation", messages: INITIAL_CHAT }];
+    } catch {
+      return [{ id: 1, title: "New Consultation", messages: INITIAL_CHAT }];
+    }
+  });
+  
+  const [activeId, setActiveId] = useState(conversations[0]?.id || 1);
+  const currentConversation = conversations.find(c => c.id === activeId) || conversations[0] || { messages: INITIAL_CHAT };
+  const messages = currentConversation.messages;
+
+  const setMessages = (newMessagesOrUpdater) => {
+    setConversations(prev => prev.map(c => {
+      if (c.id === activeId) {
+        const nextMessages = typeof newMessagesOrUpdater === "function" ? newMessagesOrUpdater(c.messages) : newMessagesOrUpdater;
+        let title = c.title;
+        // Auto-generate title after the first patient message
+        if (title === "New Consultation" && nextMessages.length > 1 && nextMessages[1].role === "user") {
+          title = nextMessages[1].text.substring(0, 22) + "...";
+        }
+        return { ...c, messages: nextMessages, title };
+      }
+      return c;
+    }));
+  };
+
+  const createNewChat = () => {
+    const newId = Date.now();
+    setConversations(prev => [{ id: newId, title: "New Consultation", messages: INITIAL_CHAT }, ...prev]);
+    setActiveId(newId);
+  };
+
+  const deleteChat = (id, e) => {
+    e.stopPropagation();
+    const filtered = conversations.filter(c => c.id !== id);
+    if (filtered.length === 0) {
+      const newId = Date.now();
+      setConversations([{ id: newId, title: "New Consultation", messages: INITIAL_CHAT }]);
+      setActiveId(newId);
+    } else {
+      setConversations(filtered);
+      if (activeId === id) setActiveId(filtered[0].id);
+    }
+  };
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [faqs, setFaqs] = useState(INITIAL_FAQS);
@@ -1317,8 +1369,9 @@ function ChatBot({ onFAQUpdate }) {
   const endRef = useRef(null);
 
   useEffect(() => {
+    localStorage.setItem("mist_ai_conversations", JSON.stringify(conversations));
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [conversations, messages]);
 
   const KEYWORDS = ["bph", "prostate", "urologist", "ipss", "urolift", "rezum", "turp", "holep", "aquablation", "surgery", "medication", "symptom", "treatment", "mist", "catheter", "retention", "flow", "nocturia", "frequency"];
 
@@ -1330,15 +1383,18 @@ function ChatBot({ onFAQUpdate }) {
   const updateFAQFromKeywords = useCallback((newLog) => {
     const sorted = Object.entries(newLog).sort((a, b) => b[1] - a[1]);
     const topKeyword = sorted[0]?.[0];
-    if (!topKeyword || newLog[topKeyword] < 3) return;
+    if (!topKeyword || newLog[topKeyword] < 1) return; // ⚡️ DYNAMIC: triggers instantly now based on user chat frequency
 
     const autoFAQs = {
-      urolift: { q: "What is the recovery time after UroLift?", a: "UroLift is an outpatient procedure. Most patients return to normal activity within 1–2 days. Temporary urinary symptoms (frequency, urgency, mild discomfort) resolve within 2–4 weeks." },
-      rezum: { q: "How does Rezum compare to UroLift?", a: "Both are minimally invasive. Rezum uses steam to reduce tissue and works for median lobe enlargement. UroLift uses implants and has faster recovery. Discuss with your urologist which fits your anatomy and goals." },
-      holep: { q: "Is HoLEP better than TURP?", a: "HoLEP has comparable efficacy to TURP with lower bleeding risk, shorter catheterization time, and is size-independent. It requires specialized laser expertise. Both are excellent options depending on surgeon experience." },
-      turp: { q: "What are TURP side effects?", a: "Common: retrograde ejaculation (~65–90%), temporary urinary symptoms. Rare: bleeding, infection, TUR syndrome (with monopolar), urethral stricture. Bipolar TURP has lower TUR syndrome risk." },
-      aquablation: { q: "Who is a good candidate for Aquablation?", a: "Aquablation is ideal for men with complex anatomy, prostates 30–150 mL, and those wishing to preserve ejaculatory function. It uses robotic ultrasound-guided waterjet with image-planned treatment." },
-      nocturia: { q: "What causes nocturia in BPH?", a: "BPH causes bladder outlet obstruction, reducing functional capacity and stimulating overactive detrusor. Nocturnal polyuria may also contribute. IPSS question 7 specifically quantifies nocturia severity." },
+      urolift: { q: "What is the recovery time after UroLift?", a: "UroLift is an outpatient procedure. Most patients return to normal activity within 1–2 days." },
+      rezum: { q: "How does Rezum compare to UroLift?", a: "Both are minimally invasive. Rezum uses steam to reduce tissue. UroLift uses implants. Discuss with your urologist." },
+      holep: { q: "Is HoLEP better than TURP?", a: "HoLEP has comparable efficacy to TURP with lower bleeding risk, shorter catheterization time, and works for any size." },
+      turp: { q: "What are TURP side effects?", a: "Common: retrograde ejaculation (~65–90%). Rare: bleeding, infection, TUR syndrome." },
+      aquablation: { q: "Who is a good candidate for Aquablation?", a: "Aquablation is ideal for men with complex anatomy, prostates 30–150 mL, and those wishing to preserve ejaculatory function." },
+      nocturia: { q: "What causes nocturia in BPH?", a: "BPH causes bladder outlet obstruction, reducing functional capacity. IPSS question 7 quantifies nocturia severity." },
+      catheter: { q: "Will I need a catheter?", a: "Most MIST procedures require a temporary catheter for 1 to 5 days, depending on swelling and the specific surgical modality chosen." },
+      surgery: { q: "When is BPH surgery required?", a: "Surgery is indicated for recurrent retention, recurrent UTIs, gross hematuria, bladder stones, or failure of medical therapy." },
+      medication: { q: "What are common BPH medications?", a: "Alpha-blockers (Tamsulosin) relax the prostate. 5-ARIs (Finasteride) shrink the prostate over months." }
     };
 
     if (autoFAQs[topKeyword]) {
@@ -1380,9 +1436,11 @@ IMPORTANT RULES:
 
     try {
       // --- RAG PIPELINE: Step 1. Get embedding for the user's query
-      const embedResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y`, {
+      const geminiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y";
+      
+      const embedResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "models/text-embedding-004", content: { parts: [{ text: userText }] } })
+        body: JSON.stringify({ content: { parts: [{ text: userText }] } })
       });
       const embedData = await embedResponse.json();
       const queryEmbedding = embedData.embedding?.values;
@@ -1402,9 +1460,29 @@ IMPORTANT RULES:
       }
 
       // --- RAG PIPELINE: Step 3. Augment System Prompt
-      const dynamicSystemPrompt = `${systemPrompt}\n\n====================\n🔍 RETRIEVED CLINICAL KNOWLEDGE BASE CONTEXT:\n${ragContext}\n\nInstructions: Use the retrieved knowledge base context to specifically ground and shape your answer accurately. Do NOT hallucinate medical statistics. If the context does not contain the exact answer, answer conversationally but rely on your foundational clinical guidelines training.\n====================`;
+      const patientHistoryText = history && history.length > 0
+        ? history.slice(0, 3).map((h, i) => `Test ${i+1} (${h.date}): Total IPSS Score ${h.score} (${h.severity} severity). QoL: ${h.qol}.`).join('\n')
+        : "No assessments completed yet.";
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDNjzAvZLuYXHtk888dt3B9PVYQg1Dn54Y`, {
+      const dynamicSystemPrompt = `${systemPrompt}
+
+====================
+🧑‍⚕️ PATIENT'S MEDICAL PROFILE & IPSS HISTORY:
+${patientHistoryText}
+====================
+
+====================
+🔍 RETRIEVED CLINICAL KNOWLEDGE BASE CONTEXT:
+${ragContext}
+====================
+
+Instructions: 
+1. You have direct access to the user's historical IPSS scores above. If they ask about their scores, reference their data accurately and personally!
+2. CRITICAL REQUIREMENT: Whenever you provide recommendations or statistics based on Google Searches or retrieved context, you MUST include a markdown hyperlink to the source URL at the end of your response (e.g., "Read more at [Study Name](URL)").
+3. Use the retrieved knowledge base context to specifically ground your answer accurately. Do NOT hallucinate medical statistics. If the context does not contain the exact answer, rely on foundational clinical guidelines.
+====================`;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1416,6 +1494,9 @@ IMPORTANT RULES:
             })),
             { role: "user", parts: [{ text: userText }] }
           ],
+          tools: [
+            { googleSearch: {} }
+          ],
           generationConfig: { maxOutputTokens: 1000 }
         })
       });
@@ -1424,33 +1505,41 @@ IMPORTANT RULES:
       
       const botText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I apologize, I couldn't process that request. Please try again.";
       setMessages(prev => [...prev, { role: "bot", text: botText, disclaimer: false }]);
-    } catch {
-      setMessages(prev => [...prev, {
-        role: "bot",
-        text: "I'm having connectivity issues. Please try again shortly.\n\n⚕️ Disclaimer: This is educational information only. Consult your urologist for personalized medical advice.",
-        disclaimer: false
-      }]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages(prev => [...prev, { role: "bot", text: `Network Error: ${error.message}` }]);
     }
     setLoading(false);
   };
 
   const toggleFAQ = (i) => setFaqs(prev => prev.map((f, idx) => idx === i ? { ...f, expanded: !f.expanded } : f));
 
-  const suggestedQuestions = [
-    "What is UroLift?",
-    "How is IPSS score calculated?",
-    "Rezum vs TURP — which is better?",
-    "When should I see a urologist?"
-  ];
+  // Dynamic FAQ: Automatically renders the top 4 most frequently triggered user questions in the quick-chips
+  const suggestedQuestions = faqs
+    .sort((a, b) => b.freq - a.freq)
+    .slice(0, 4)
+    .map(f => f.q);
 
   return (
-    <div className="page">
-      <div className="section-header">
-        <h1>AI Patient Support</h1>
-        <p>MIST-AI powered by Claude — ask anything about BPH, MIST procedures, or your symptoms</p>
+    <div className="page" style={{ height: "100%", overflow: "hidden" }}>
+      <div className="section-header" style={{ marginBottom: 16 }}>
+        <div>
+          <h1>AI Patient Support</h1>
+          <p>MIST-AI powered by Gemini Research — ask anything about BPH, MIST procedures, or your symptoms</p>
+        </div>
       </div>
 
       <div className="chat-layout">
+        <div className="history-sidebar">
+          <button className="btn btn-primary btn-new-chat" onClick={createNewChat} style={{ marginBottom: 16 }}>➕ New Chat</button>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-sec)", letterSpacing: 0.5, marginBottom: 4, paddingLeft: 4 }}>PAST CONSULTATIONS</div>
+          {conversations.map(c => (
+            <div key={c.id} className={`history-item ${activeId === c.id ? "active" : ""}`} onClick={() => setActiveId(c.id)}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{c.title}</span>
+              <span style={{ fontSize: 10, opacity: 0.6 }} onClick={(e) => deleteChat(c.id, e)}>✕</span>
+            </div>
+          ))}
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="chat-window">
             <div className="chat-header">
@@ -1503,7 +1592,7 @@ IMPORTANT RULES:
 
         <div className="faq-sidebar">
           <div className="faq-title-row">
-            <div className="card-title" style={{ marginBottom: 0 }}>Auto-Generated FAQs</div>
+            <div className="card-title" style={{ marginBottom: 0 }}>FAQs</div>
             <span className="faq-badge">AI-UPDATED</span>
           </div>
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
@@ -2124,8 +2213,7 @@ export default function App() {
     { id: "assessment", label: "IPSS Assessment", icon: "📋", section: "assessment" },
     { id: "treatments", label: "Treatments", icon: "💊", section: "assessment" },
     { id: "chatbot", label: "AI Support", icon: "🤖", section: "support" },
-    { id: "analytics", label: "Analytics", icon: "📈", section: "reports" },
-    { id: "schema", label: "DB Schema", icon: "🗄", section: "developer" },
+    { id: "analytics", label: "Analytics", icon: "📈", section: "reports" }
   ];
 
   const pageTitles = {
@@ -2241,11 +2329,13 @@ export default function App() {
           {page === "dashboard" && <Dashboard onStartAssessment={() => setPage("assessment")} history={history} onDeleteAssessment={handleDeleteAssessment} />}
           {page === "assessment" && <IPSSAssessment onComplete={handleAssessmentComplete} />}
           {page === "treatments" && renderTreatmentsPage()}
-          {page === "chatbot" && <ChatBot />}
+          {page === "chatbot" && <ChatBot history={history} />}
           {page === "analytics" && <Analytics history={history} />}
-          {page === "schema" && <SchemaPage />}
         </div>
       </div>
+      {page !== "chatbot" && (
+        <button className="global-chat-fab" onClick={() => setPage("chatbot")} title="Chat with AI Support">💬</button>
+      )}
     </>
   );
 }
