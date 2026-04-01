@@ -773,6 +773,33 @@ const css = `
     padding: 16px 18px 6px;
     font-weight: 600;
   }
+
+  /* ── MODALS ── */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10, 22, 40, 0.5); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal-content {
+    background: white; border-radius: var(--radius); padding: 32px;
+    width: 100%; max-width: 400px; box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    text-align: center;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .modal-icon {
+    width: 60px; height: 60px; border-radius: 50%;
+    background: rgba(239, 68, 68, 0.1); color: var(--severe);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; margin: 0 auto 20px;
+  }
+  .modal-title { font-family: var(--font-display); font-size: 22px; color: var(--navy); margin-bottom: 8px; }
+  .modal-desc { font-size: 14px; color: var(--text-muted); line-height: 1.5; margin-bottom: 24px; }
+  .modal-actions { display: flex; gap: 12px; justify-content: center; }
 `;
 
 // ─────────────────────────────────────────────
@@ -950,7 +977,10 @@ function SparklineChart({ data }) {
 }
 
 // ── DASHBOARD ──
-function Dashboard({ onStartAssessment, history }) {
+function Dashboard({ onStartAssessment, history, onDeleteAssessment }) {
+  const [viewAll, setViewAll] = useState(false);
+  const displayHistory = viewAll ? history : history.slice(0, 5);
+
   const latest = history[0];
   const scores = history.map(h => h.score).reverse();
   return (
@@ -1005,18 +1035,40 @@ function Dashboard({ onStartAssessment, history }) {
                 <th>Date</th>
                 <th>Score</th>
                 <th>Severity</th>
+                <th style={{ textAlign: "right", paddingRight: "16px" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {history.slice(0, 5).map((h, i) => (
-                <tr key={i}>
+              {displayHistory.map((h, i) => (
+                <tr key={h.id || i}>
                   <td>{h.date}</td>
                   <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>{h.score}</td>
                   <td><span className={`severity-pill ${h.severity}`}>● {h.severity}</span></td>
+                  <td style={{ textAlign: "right", paddingRight: "16px" }}>
+                    <button 
+                      onClick={() => onDeleteAssessment(h.id)} 
+                      style={{ background: "none", border: "none", color: "var(--severe)", cursor: "pointer", opacity: 0.6, fontSize: "16px", padding: 0 }}
+                      onMouseOver={e => e.target.style.opacity = 1}
+                      onMouseOut={e => e.target.style.opacity = 0.6}
+                      title="Delete Assessment"
+                    >
+                      🗑️
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {history.length > 5 && (
+             <button 
+               onClick={() => setViewAll(!viewAll)} 
+               style={{ width: "100%", padding: "12px", background: "var(--off-white)", border: "none", color: "var(--cobalt)", cursor: "pointer", fontSize: "13px", fontWeight: 600, borderBottomLeftRadius: "var(--radius)", borderBottomRightRadius: "var(--radius)", transition: "all 0.15s" }}
+               onMouseOver={e => e.target.style.background = "rgba(30,79,216,0.1)"}
+               onMouseOut={e => e.target.style.background = "var(--off-white)"}
+             >
+                 {viewAll ? "Show Less" : "View All Assessments ⌄"}
+             </button>
+          )}
         </div>
       </div>
     </div>
@@ -1914,6 +1966,7 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [assessmentResult, setAssessmentResult] = useState(null);
   const [history, setHistory] = useState([]);
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, id: null });
 
   useEffect(() => {
     const fetchHistory = async (userId) => {
@@ -1928,6 +1981,7 @@ export default function App() {
         
       if (!error && data) {
         const formatted = data.map(row => ({
+          id: row.id,
           score: row.total_score,
           severity: row.severity.toLowerCase(),
           qol: ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'][row.q8_quality_of_life] || "Mixed",
@@ -1969,6 +2023,30 @@ export default function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  const handleDeleteAssessment = async (id) => {
+    if (!id) {
+       alert("This assessment is recently taken and syncing. Please refresh the page before deleting.");
+       return;
+    }
+    setDeleteModal({ isOpen: true, id });
+  };
+
+  const confirmDeleteAssessment = async () => {
+    const id = deleteModal.id;
+    setDeleteModal({ isOpen: false, id: null });
+    
+    setHistory(prev => prev.filter(h => h.id !== id));
+    
+    const { error } = await supabase
+      .from('ipss_assessments')
+      .delete()
+      .eq('id', id);
+      
+    if (error) {
+      alert("Failed to delete assessment: " + error.message);
+    }
+  };
 
   const handleAssessmentComplete = async (result) => {
     // result.answers contains 0-6 index answers Map to our api payload
@@ -2075,6 +2153,21 @@ export default function App() {
   return (
     <>
       <style>{css}</style>
+      
+      {deleteModal.isOpen && (
+        <div className="modal-overlay" onClick={() => setDeleteModal({ isOpen: false, id: null })}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon">🗑️</div>
+            <div className="modal-title">Delete Assessment</div>
+            <div className="modal-desc">Are you sure you want to delete this assessment record? This action is permanent and cannot be undone.</div>
+            <div className="modal-actions">
+              <button className="btn btn-outline" style={{ flex: 1, justifyContent: "center" }} onClick={() => setDeleteModal({ isOpen: false, id: null })}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, justifyContent: "center", background: "var(--severe)", boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)" }} onClick={confirmDeleteAssessment}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-logo">
@@ -2120,7 +2213,7 @@ export default function App() {
             </div>
           </div>
 
-          {page === "dashboard" && <Dashboard onStartAssessment={() => setPage("assessment")} history={history} />}
+          {page === "dashboard" && <Dashboard onStartAssessment={() => setPage("assessment")} history={history} onDeleteAssessment={handleDeleteAssessment} />}
           {page === "assessment" && <IPSSAssessment onComplete={handleAssessmentComplete} />}
           {page === "treatments" && renderTreatmentsPage()}
           {page === "chatbot" && <ChatBot />}
