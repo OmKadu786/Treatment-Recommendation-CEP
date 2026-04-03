@@ -1314,10 +1314,10 @@ function IPSSResult({ result, onRetake }) {
 }
 
 // ── AI CHATBOT ──
-function ChatBot({ history }) {
+function ChatBot({ history, userId }) {
   const [conversations, setConversations] = useState(() => {
     try {
-      const saved = localStorage.getItem("mist_ai_conversations");
+      const saved = localStorage.getItem(`mist_ai_conversations_${userId}`);
       return saved ? JSON.parse(saved) : [{ id: 1, title: "New Consultation", messages: INITIAL_CHAT }];
     } catch {
       return [{ id: 1, title: "New Consultation", messages: INITIAL_CHAT }];
@@ -1369,9 +1369,9 @@ function ChatBot({ history }) {
   const endRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem("mist_ai_conversations", JSON.stringify(conversations));
+    localStorage.setItem(`mist_ai_conversations_${userId}`, JSON.stringify(conversations));
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [conversations, messages]);
+  }, [conversations, messages, userId]);
 
   const KEYWORDS = ["bph", "prostate", "urologist", "ipss", "urolift", "rezum", "turp", "holep", "aquablation", "surgery", "medication", "symptom", "treatment", "mist", "catheter", "retention", "flow", "nocturia", "frequency"];
 
@@ -1987,7 +1987,7 @@ function SchemaPage() {
 // ── AUTH PAGE ──
 function AuthPage({ onLogin }) {
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ email: "", password: "", name: "" });
+  const [form, setForm] = useState({ email: "", password: "", name: "", role: "patient" });
 
   const [loading, setLoading] = useState(false);
 
@@ -1998,13 +1998,22 @@ function AuthPage({ onLogin }) {
         const { error } = await supabase.auth.signInWithPassword({ email: form.email, password: form.password });
         if (error) throw error;
       } else {
-        const { error } = await supabase.auth.signUp({ 
+        const { data, error } = await supabase.auth.signUp({ 
           email: form.email, 
           password: form.password,
-          options: { data: { full_name: form.name } }
+          options: { data: { full_name: form.name, role: form.role } } // Safely embedded directly into the GoTrue Vault
         });
         if (error) throw error;
-        alert("Account Created!");
+        
+        if (data?.user) {
+          // Sync role, email, and name forcefully into profiles so they are searchable!
+          // We MUST await this to ensure the database correctly overwrites the default 'patient' trigger
+          await supabase.from('profiles').update({ role: form.role, first_name: form.name, email: form.email }).eq('id', data.user.id);
+        }
+
+        alert("Account Created! You've been logged in.");
+        // Force a brutal refresh to destroy the race-condition between the React listener and the DB Update!
+        window.location.reload();
       }
     } catch (error) {
       alert(error.message);
@@ -2037,11 +2046,28 @@ function AuthPage({ onLogin }) {
           </div>
 
           {mode === "register" && (
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, color: "var(--ice)", display: "block", marginBottom: 6 }}>Full Name</label>
-              <input style={{ width: "100%", padding: "10px 14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "white", fontFamily: "var(--font-body)", fontSize: 14, outline: "none" }}
-                value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="John Smith" />
-            </div>
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, color: "var(--ice)", display: "block", marginBottom: 6 }}>I am a...</label>
+                <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 4 }}>
+                  {["patient", "doctor"].map(r => (
+                    <button key={r} onClick={() => setForm(p => ({...p, role: r}))} style={{
+                      flex: 1, padding: "8px 0", borderRadius: 6, border: "none", cursor: "pointer",
+                      background: form.role === r ? (r==="patient"?"var(--cobalt)":"var(--severe)") : "transparent",
+                      color: form.role === r ? "white" : "rgba(255,255,255,0.5)",
+                      fontFamily: "var(--font-body)", fontSize: 13, fontWeight: form.role===r?600:500, textTransform: "capitalize"
+                    }}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: "var(--ice)", display: "block", marginBottom: 6 }}>Full Name</label>
+                <input style={{ width: "100%", padding: "10px 14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "white", fontFamily: "var(--font-body)", fontSize: 14, outline: "none" }}
+                  value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder={form.role==="doctor"?"Dr. Smith":"John Smith"} />
+              </div>
+            </>
           )}
 
           <div style={{ marginBottom: 14 }}>
@@ -2056,18 +2082,9 @@ function AuthPage({ onLogin }) {
               value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} placeholder="••••••••" />
           </div>
 
-          <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "12px 24px" }} onClick={handleSubmit}>
+          <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "12px 24px", marginTop: 8 }} onClick={handleSubmit}>
             {mode === "login" ? "Sign In →" : "Create Account →"}
           </button>
-
-          <div style={{ display: "flex", gap: 8, flexDirection: "column", marginBottom: 24 }}>
-            <button className="btn btn-outline" style={{ justifyContent: "center" }} onClick={() => { setForm({email: "patient@mist.com", password: "patientpassword"}); setMode("login"); }}>
-              Patient Demo Login
-            </button>
-            <button className="btn btn-outline" style={{ justifyContent: "center" }} onClick={() => { setForm({email: "doctor@mist.com", password: "doctorpassword"}); setMode("login"); }}>
-              Doctor / Admin Demo Login
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -2075,6 +2092,188 @@ function AuthPage({ onLogin }) {
 }
 
 const var_radius = "var(--radius)";
+
+function OnboardingModal({ user, onComplete }) {
+  const [form, setForm] = useState({ age: "", height: "", weight: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!form.age || !form.height || !form.weight) return alert("Please fill out all clinical details.");
+    setSubmitting(true);
+    const { error } = await supabase.from('profiles').update({
+      age: parseInt(form.age),
+      height_cm: parseFloat(form.height),
+      weight_kg: parseFloat(form.weight)
+    }).eq("id", user.id);
+    setSubmitting(false);
+    if (!error) onComplete();
+    else alert("Failed to save clinical details.");
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ width: 400 }}>
+        <h2>Complete Your Profile</h2>
+        <p style={{ color: "var(--text-sec)", fontSize: 13, marginBottom: 24 }}>
+          To provide accurate clinical recommendations and IPSS analysis, we need a few basic details first.
+        </p>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 12, marginBottom: 6, color: "var(--text-sec)" }}>Age (years)</label>
+          <input type="number" value={form.age} onChange={e => setForm(p => ({ ...p, age: e.target.value }))} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--glass-border)", background: "var(--sys-bg)" }} placeholder="e.g. 62" />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 12, marginBottom: 6, color: "var(--text-sec)" }}>Height (cm)</label>
+          <input type="number" value={form.height} onChange={e => setForm(p => ({ ...p, height: e.target.value }))} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--glass-border)", background: "var(--sys-bg)" }} placeholder="e.g. 175" />
+        </div>
+        <div style={{ marginBottom: 24 }}>
+          <label style={{ display: "block", fontSize: 12, marginBottom: 6, color: "var(--text-sec)" }}>Weight (kg)</label>
+          <input type="number" value={form.weight} onChange={e => setForm(p => ({ ...p, weight: e.target.value }))} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--glass-border)", background: "var(--sys-bg)" }} placeholder="e.g. 80" />
+        </div>
+
+        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} onClick={handleSubmit} disabled={submitting}>
+          {submitting ? "Saving..." : "Save Clinical Details"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProfilePage({ userProfile, user }) {
+  if (!userProfile) return null;
+  return (
+    <div className="card" style={{ maxWidth: 640 }}>
+      <h2 style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid var(--glass-border)" }}>Patient Details</h2>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+        <div>
+          <label style={{ color: "var(--text-sec)", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>Name</label>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>{user?.name || "Patient"}</div>
+        </div>
+        <div>
+          <label style={{ color: "var(--text-sec)", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>Email</label>
+          <div style={{ fontSize: 16 }}>{user?.email}</div>
+        </div>
+        <div>
+          <label style={{ color: "var(--text-sec)", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>Age</label>
+          <div style={{ fontSize: 16 }}>{userProfile.age ? `${userProfile.age} years` : "Not provided"}</div>
+        </div>
+        <div>
+          <label style={{ color: "var(--text-sec)", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>Height</label>
+          <div style={{ fontSize: 16 }}>{userProfile.height_cm ? `${userProfile.height_cm} cm` : "Not provided"}</div>
+        </div>
+        <div>
+          <label style={{ color: "var(--text-sec)", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>Weight</label>
+          <div style={{ fontSize: 16 }}>{userProfile.weight_kg ? `${userProfile.weight_kg} kg` : "Not provided"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccessManagement({ user }) {
+  const [requests, setRequests] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const isDoc = user?.role === "doctor" || user?.role === "admin";
+
+  const fetchReqs = useCallback(async () => {
+    // Join logic to get the correlated profiles
+    const { data } = await supabase.from('access_requests').select(`
+       *,
+       doctor:profiles!access_requests_doctor_id_fkey(id, first_name, email, role),
+       patient:profiles!access_requests_patient_id_fkey(id, first_name, email, role)
+    `);
+    if (data) setRequests(data);
+  }, []);
+
+  useEffect(() => {
+    fetchReqs();
+  }, [fetchReqs]);
+
+  const handleSend = async () => {
+    if (!searchTerm.trim()) return alert("Please enter an email or name.");
+    
+    // Resolve the user ID based on email or first name
+    const { data: foundUsers } = await supabase.from('profiles')
+        .select('id, first_name, email, role')
+        .or(`email.ilike.%${searchTerm}%,first_name.ilike.%${searchTerm}%`)
+        .eq('role', isDoc ? 'patient' : 'doctor')
+        .limit(1);
+
+    if (!foundUsers || foundUsers.length === 0) {
+        return alert(`Could not find any ${isDoc ? 'patient' : 'doctor'} matching "${searchTerm}"`);
+    }
+    
+    const targetUserId = foundUsers[0].id;
+
+    const { error } = await supabase.from('access_requests').insert({
+      [isDoc ? 'doctor_id' : 'patient_id']: user.id,
+      [isDoc ? 'patient_id' : 'doctor_id']: targetUserId,
+      status: isDoc ? 'pending' : 'approved' // Patients instantly approve docs
+    });
+    
+    if (error) {
+       if (error.code === '23505') alert("Access request already exists for this user!");
+       else alert("Error sending request: " + error.message);
+    } else {
+       alert(`Successfully sent access request to ${foundUsers[0].first_name || foundUsers[0].email}`);
+       fetchReqs();
+       setSearchTerm("");
+    }
+  };
+
+  const handleApprove = async (reqId) => {
+    await supabase.from('access_requests').update({ status: 'approved' }).eq('id', reqId);
+    fetchReqs();
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: 700 }}>
+      <h2 style={{ marginBottom: 24, borderBottom: "1px solid var(--glass-border)", paddingBottom: 16 }}>
+        {isDoc ? "Request Patient Data Access" : "Manage Doctor Access"}
+      </h2>
+      
+      <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+        <input 
+          value={searchTerm} 
+          onChange={e => setSearchTerm(e.target.value)} 
+          placeholder={`Enter the ${isDoc ? "Patient's" : "Doctor's"} Name or Email...`}
+          style={{ flex: 1, padding: "12px 14px", borderRadius: 8, background: "var(--navy-mid)", color: "white", border: "1px solid var(--glass-border)", outline: "none", fontSize: 14 }} 
+        />
+        <button className="btn btn-primary" onClick={handleSend} style={{ whiteSpace: "nowrap", padding: "0 24px" }}>
+           {isDoc ? "Send Request" : "Grant Access"}
+        </button>
+      </div>
+
+      <h3 style={{ fontSize: 14, color: "var(--text-sec)", textTransform: "uppercase", marginBottom: 12 }}>Active & Pending Requests</h3>
+      {requests.length === 0 ? <p style={{ color: "var(--text-sec)", fontSize: 13 }}>No access requests found.</p> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {requests.map(req => {
+             const isIncoming = isDoc ? req.doctor_id !== user.id : req.patient_id === user.id;
+             const targetProfile = isDoc ? req.patient : req.doctor;
+             const targetName = targetProfile?.first_name || targetProfile?.email || "Unknown User";
+
+             return (
+               <div key={req.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px solid var(--glass-border)" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{isDoc ? `Patient:` : `Doctor:`} {targetName}</div>
+                    <div style={{ fontSize: 12, color: req.status === 'approved' ? 'var(--cobalt)' : (req.status === 'rejected' ? 'var(--severe)' : 'var(--text-sec)'), textTransform: "uppercase", marginTop: 4 }}>
+                       Status: {req.status}
+                    </div>
+                  </div>
+                  {(!isDoc && req.status === 'pending') && (
+                     <div style={{ display: "flex", gap: 8 }}>
+                       <button className="btn btn-primary" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => handleApprove(req.id)}>Approve</button>
+                       <button className="btn btn-outline" style={{ padding: "6px 12px", fontSize: 12, borderColor: "var(--severe)", color: "var(--severe)" }} onClick={() => supabase.from('access_requests').update({status:'rejected'}).eq('id', req.id).then(fetchReqs)}>Reject</button>
+                     </div>
+                  )}
+               </div>
+             )
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────
 // MAIN APP
@@ -2087,17 +2286,32 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, id: null });
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
 
   useEffect(() => {
     const fetchHistory = async (userId, userRole) => {
       // Upsert profile just in case it's missing, securely syncing their role for the newly created RLS policies!
-      await supabase.from('profiles').upsert({ id: userId, role: userRole }).select();
+      const { data: profData } = await supabase.from('profiles').upsert({ id: userId, role: userRole }).select().single();
       
-      const { data, error } = await supabase
-        .from('ipss_assessments')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+      setUserProfile(profData);
+      // Trigger onboarding loop if vital signs are missing
+      if (profData && userRole === 'patient') {
+         if (!profData.height_cm || !profData.weight_kg || !profData.age) {
+            setNeedsOnboarding(true);
+         }
+      }
+      
+      let query = supabase.from('ipss_assessments').select('*').order('created_at', { ascending: false });
+      
+      // Strict role enforcement logic:
+      // If the user is a patient, they MUST only fetch their exact personal assessments
+      // If the user is a Doctor/Admin, the RLS policy automatically filters what they see globally, so we remove the .eq filter here
+      if (userRole === "patient") {
+         query = query.eq('user_id', userId);
+      }
+      
+      const { data, error } = await query;
         
       if (!error && data) {
         const formatted = data.map(row => ({
@@ -2120,29 +2334,38 @@ export default function App() {
       }
     };
 
+    const loadUserWithProfile = async (session) => {
+      // Step 1: Forcefully pull the definitive role from the secure GoTrue JWT Metadata if available (bypasses all race conditions)
+      const metaRole = session.user.user_metadata?.role;
+      
+      // Step 2: Grab the database profile state
+      const { data: prof } = await supabase.from('profiles').select('role, first_name, height_cm').eq('id', session.user.id).single();
+      
+      const definitiveRole = metaRole || prof?.role || "patient";
+
+      // Step 3: Self-Healing mechanism. If the database trigger messed up the role, the frontend proactively fixes it now that the session is valid
+      if (prof && prof.role !== definitiveRole) {
+         await supabase.from('profiles').update({ role: definitiveRole }).eq('id', session.user.id);
+      }
+
+      setUser({ 
+        id: session.user.id, 
+        email: session.user.email, 
+        name: session.user.user_metadata?.full_name || (prof?.first_name ? `${prof.first_name}` : "Patient"),
+        role: definitiveRole 
+      });
+      fetchHistory(session.user.id, definitiveRole);
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthed(!!session);
-      if (session) {
-        const email = session.user.email;
-        let role = "patient";
-        if (email.includes("doctor")) role = "doctor";
-        if (email.includes("admin")) role = "admin";
-        
-        setUser({ 
-          id: session.user.id, 
-          email: session.user.email, 
-          name: session.user.user_metadata?.full_name || role.toUpperCase(),
-          role 
-        });
-        fetchHistory(session.user.id, role);
-      }
+      if (session) loadUserWithProfile(session);
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setAuthed(!!session);
       if (session) {
-        setUser({ id: session.user.id, email: session.user.email, name: session.user.user_metadata?.full_name || "Patient" });
-        fetchHistory(session.user.id);
+         loadUserWithProfile(session);
       } else {
         setUser(null);
         setHistory([]);
@@ -2225,19 +2448,32 @@ export default function App() {
   );
 
   let NAV = [
-    { id: "dashboard", label: "Dashboard", icon: "📊", section: "overview" },
-    { id: "assessment", label: "IPSS Assessment", icon: "📋", section: "assessment" },
-    { id: "treatments", label: "Treatments", icon: "💊", section: "assessment" },
-    { id: "chatbot", label: "AI Support", icon: "🤖", section: "support" },
-    { id: "analytics", label: "Analytics", icon: "📈", section: "reports" }
+    { id: "dashboard", label: "Dashboard", icon: "📊", section: "overview" }
   ];
+
+  if (user?.role === "patient") {
+    NAV.push({ id: "assessment", label: "IPSS Assessment", icon: "📋", section: "assessment" });
+    NAV.push({ id: "treatments", label: "Treatments", icon: "💊", section: "assessment" });
+    NAV.push({ id: "chatbot", label: "AI Support", icon: "🤖", section: "support" });
+    NAV.push({ id: "profile", label: "My Details", icon: "👤", section: "support" });
+  }
+
+  // Doctors and Admins get exclusive access to Analytical Reports, NO ASSESSMENTS OR BOTS.
+  if (user?.role === "doctor" || user?.role === "admin") {
+    NAV.push({ id: "analytics", label: "Global Analytics", icon: "📈", section: "reports" });
+  }
+
+  // Everyone gets the robust explicit access management dashboard
+  NAV.push({ id: "access", label: "Access Requests", icon: "🔐", section: "support" });
 
   const pageTitles = {
     dashboard: { title: "Dashboard", sub: "Clinical overview and recent assessments" },
     assessment: { title: "IPSS Assessment", sub: "International Prostate Symptom Score questionnaire" },
     treatments: { title: "Treatment Pathways", sub: "Evidence-based MIST recommendations" },
     chatbot: { title: "AI Patient Support", sub: "MIST-AI powered BPH assistance" },
-    analytics: { title: "Analytics", sub: "Longitudinal symptom analysis" },
+    profile: { title: "Patient Profile", sub: "Your clinical details and demographics" },
+    analytics: { title: "Global Analytics", sub: "Longitudinal symptom analysis suite" },
+    access: { title: "Access Management", sub: "Control medical data permissions securely" },
     schema: { title: "Database Schema", sub: "PostgreSQL migration and schema viewer" },
   };
 
@@ -2360,14 +2596,24 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <Dashboard onStartAssessment={() => setPage("assessment")} history={history} onDeleteAssessment={handleDeleteAssessment} />}
-          {page === "assessment" && <IPSSAssessment onComplete={handleAssessmentComplete} />}
-          {page === "treatments" && renderTreatmentsPage()}
-          {page === "chatbot" && <ChatBot history={history} />}
-          {page === "analytics" && <Analytics history={history} />}
+          {page === "assessment" && user?.role === "patient" && <IPSSAssessment onComplete={handleAssessmentComplete} />}
+          {page === "treatments" && user?.role === "patient" && renderTreatmentsPage()}
+          {page === "chatbot" && user?.role === "patient" && <ChatBot key={user?.id} history={history} userId={user?.id} />}
+          {page === "profile" && user?.role === "patient" && <ProfilePage userProfile={userProfile} user={user} />}
+          {page === "analytics" && (user?.role === "doctor" || user?.role === "admin") && <Analytics history={history} />}
+          {page === "access" && <AccessManagement user={user} />}
         </div>
       </div>
-      {page !== "chatbot" && (
+      {page !== "chatbot" && user?.role === "patient" && (
         <button className="global-chat-fab" onClick={() => setPage("chatbot")} title="Chat with AI Support">💬</button>
+      )}
+
+      {needsOnboarding && (
+        <OnboardingModal user={user} onComplete={() => {
+           setNeedsOnboarding(false);
+           // Refresh profile data locally
+           supabase.from('profiles').select('*').eq('id', user.id).single().then(({data}) => setUserProfile(data));
+        }} />
       )}
     </>
   );
