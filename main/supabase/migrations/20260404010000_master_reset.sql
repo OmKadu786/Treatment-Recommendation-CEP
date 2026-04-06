@@ -61,10 +61,13 @@ CREATE TABLE public.treatment_recommendations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   assessment_id UUID REFERENCES public.ipss_assessments(id) ON DELETE CASCADE,
-  recommended_plan TEXT NOT NULL,
+  recommended_plan TEXT,
   ai_rationale TEXT,
   doctor_override TEXT,
   status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Approved', 'Rejected')),
+  medical_disclaimer TEXT,
+  clinical_consultation_required BOOLEAN,
+  recommended_pathways JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -1618,24 +1618,47 @@ Instructions:
 
 // ── ANALYTICS ──
 function Analytics({ history }) {
-  const scores = [...history].reverse().map(h => h.score);
-  const severityCount = { mild: 0, moderate: 0, severe: 0 };
-  history.forEach(h => severityCount[h.severity]++);
-  const total = history.length;
+  const [patientProfiles, setPatientProfiles] = useState({});
+  const [expandedPatient, setExpandedPatient] = useState(null);
+
+  // Group assessments by patient user_id
+  const patientGroups = useMemo(() => {
+    const groups = {};
+    history.forEach(h => {
+      if (!groups[h.user_id]) groups[h.user_id] = [];
+      groups[h.user_id].push(h);
+    });
+    return groups;
+  }, [history]);
+
+  // Fetch patient profiles for display names
+  useEffect(() => {
+    const ids = Object.keys(patientGroups);
+    if (ids.length === 0) return;
+    supabase.from('profiles').select('id, first_name, email, age, height_cm, weight_kg').in('id', ids).then(({ data }) => {
+      if (data) {
+        const map = {};
+        data.forEach(p => { map[p.id] = p; });
+        setPatientProfiles(map);
+      }
+    });
+  }, [patientGroups]);
+
+  const patientIds = Object.keys(patientGroups);
 
   return (
     <div className="page">
       <div className="section-header">
-        <h1>Analytics & Trends</h1>
-        <p>Longitudinal IPSS analysis and symptom progression tracking</p>
+        <h1>Patient Analytics</h1>
+        <p>Individual patient IPSS history and symptom tracking</p>
       </div>
 
       <div className="stats-row">
         {[
-          { label: "Average Score", val: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0, icon: "📊" },
-          { label: "Peak Score", val: scores.length ? Math.max(...scores) : 0, icon: "📈" },
-          { label: "Score Δ (Latest)", val: scores.length > 1 ? (scores[scores.length - 1] - scores[0] > 0 ? '+' : '') + (scores[scores.length - 1] - scores[0]) : 0, icon: "📉" },
-          { label: "Months Tracked", val: history.length * 2, icon: "🗓" }
+          { label: "Total Patients", val: patientIds.length, icon: "👥" },
+          { label: "Total Assessments", val: history.length, icon: "📋" },
+          { label: "Avg Score (All)", val: history.length ? Math.round(history.reduce((a, h) => a + h.score, 0) / history.length) : 0, icon: "📊" },
+          { label: "Severe Cases", val: history.filter(h => h.severity === 'severe').length, icon: "🚨" }
         ].map((s, i) => (
           <div className="stat-card" key={i}>
             <div className="stat-icon blue" style={{ fontSize: 20 }}>{s.icon}</div>
@@ -1647,103 +1670,130 @@ function Analytics({ history }) {
         ))}
       </div>
 
-      <div className="analytics-grid">
-        <div className="card">
-          <div className="card-title">IPSS Score History</div>
-          <div className="card-sub">Full assessment timeline with severity zones</div>
-          <svg viewBox="0 0 500 180" style={{ width: "100%", height: 180, marginTop: 8 }}>
-            <defs>
-              <linearGradient id="histGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#1E4FD8" stopOpacity="0.25" />
-                <stop offset="100%" stopColor="#1E4FD8" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            {/* Severity zones */}
-            <rect x="30" y="130" width="450" height="30" fill="rgba(34,197,94,0.08)" rx="2" />
-            <rect x="30" y="70" width="450" height="60" fill="rgba(245,158,11,0.08)" rx="2" />
-            <rect x="30" y="10" width="450" height="60" fill="rgba(239,68,68,0.08)" rx="2" />
-            <text x="34" y="150" fontSize="9" fill="#22C55E" opacity="0.8">Mild</text>
-            <text x="34" y="122" fontSize="9" fill="#F59E0B" opacity="0.8">Moderate</text>
-            <text x="34" y="22" fontSize="9" fill="#EF4444" opacity="0.8">Severe</text>
-
-            {(() => {
-              const pts = scores.map((v, i) => ({
-                x: 40 + (i / (scores.length - 1)) * 440,
-                y: 160 - (v / 35) * 150
-              }));
-              const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-              const area = `${path} L${pts[pts.length-1].x},160 L${pts[0].x},160 Z`;
-              return (
-                <>
-                  <path d={area} fill="url(#histGrad)" />
-                  <path d={path} fill="none" stroke="#1E4FD8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                  {pts.map((p, i) => (
-                    <g key={i}>
-                      <circle cx={p.x} cy={p.y} r="5" fill="white" stroke="#1E4FD8" strokeWidth="2" />
-                      <text x={p.x} y={p.y - 10} fontSize="10" textAnchor="middle" fill="var(--navy)" fontWeight="600">{scores[i]}</text>
-                    </g>
-                  ))}
-                </>
-              );
-            })()}
-          </svg>
+      {patientIds.length === 0 && (
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-sec)' }}>
+          <p style={{ fontSize: 16 }}>No patient assessment data available yet.</p>
+          <p style={{ fontSize: 13, marginTop: 8 }}>Patient IPSS scores will appear here once assessments are taken.</p>
         </div>
+      )}
 
-        <div className="card">
-          <div className="card-title">Severity Distribution</div>
-          <div className="card-sub">Breakdown of assessment outcomes</div>
-          <div className="mini-bar-chart" style={{ marginTop: 16 }}>
-            {[
-              { label: "Severe (20–35)", count: severityCount.severe, color: "var(--severe)" },
-              { label: "Moderate (8–19)", count: severityCount.moderate, color: "var(--moderate)" },
-              { label: "Mild (0–7)", count: severityCount.mild, color: "var(--mild)" }
-            ].map((b, i) => (
-              <div className="bar-row" key={i}>
-                <span className="bar-label">{b.label}</span>
-                <div className="bar-track">
-                  <div className="bar-fill" style={{ width: `${(b.count / total) * 100}%`, background: b.color }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {patientIds.map(pid => {
+          const assessments = patientGroups[pid];
+          const profile = patientProfiles[pid];
+          const name = profile?.first_name || profile?.email || `Patient ${pid.substring(0,8)}`;
+          const scores = [...assessments].reverse().map(h => h.score);
+          const latestScore = assessments[0]?.score || 0;
+          const latestSeverity = assessments[0]?.severity || 'mild';
+          const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+          const isExpanded = expandedPatient === pid;
+
+          return (
+            <div className="card" key={pid} style={{ cursor: 'pointer', transition: 'all 0.3s ease' }}>
+              {/* Patient Header — always visible */}
+              <div onClick={() => setExpandedPatient(isExpanded ? null : pid)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: '50%', background: latestSeverity === 'severe' ? 'var(--severe)' : latestSeverity === 'moderate' ? 'var(--moderate)' : 'var(--mild)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 14 }}>
+                    {name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-sec)', marginTop: 2 }}>
+                      {assessments.length} assessment{assessments.length !== 1 ? 's' : ''}
+                      {profile?.age ? ` · Age ${profile.age}` : ''}
+                      {profile?.email ? ` · ${profile.email}` : ''}
+                    </div>
+                  </div>
                 </div>
-                <span className="bar-val">{b.count}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, fontSize: 18, fontFamily: 'var(--font-mono)' }}>{latestScore}</div>
+                    <span className={`severity-pill ${latestSeverity}`} style={{ fontSize: 11 }}>● {latestSeverity}</span>
+                  </div>
+                  <span style={{ fontSize: 18, transition: 'transform 0.3s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)' }}>▼</span>
+                </div>
               </div>
-            ))}
-          </div>
 
-          <div style={{ marginTop: 24 }}>
-            <div className="card-title" style={{ fontSize: 15 }}>Symptom Velocity</div>
-            <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              Your IPSS has increased by <strong style={{ color: "var(--severe)" }}>+14 points</strong> over 9 months, suggesting progressive BPH. This rate of change (≈1.6 pts/month) warrants close urological follow-up.
+              {/* Expanded Detail Panel */}
+              {isExpanded && (
+                <div style={{ marginTop: 20, borderTop: '1px solid var(--glass-border)', paddingTop: 20 }}>
+                  {/* Mini Stats */}
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+                    <div style={{ padding: '10px 16px', background: 'rgba(30,79,216,0.06)', borderRadius: 8, fontSize: 13 }}>
+                      <strong>Avg Score:</strong> {avgScore}
+                    </div>
+                    <div style={{ padding: '10px 16px', background: 'rgba(30,79,216,0.06)', borderRadius: 8, fontSize: 13 }}>
+                      <strong>Peak:</strong> {Math.max(...scores)}
+                    </div>
+                    <div style={{ padding: '10px 16px', background: 'rgba(30,79,216,0.06)', borderRadius: 8, fontSize: 13 }}>
+                      <strong>Trend:</strong> {scores.length > 1 ? (scores[scores.length-1] - scores[0] > 0 ? '↑ Worsening' : scores[scores.length-1] - scores[0] < 0 ? '↓ Improving' : '→ Stable') : 'N/A'}
+                    </div>
+                    {profile?.height_cm && (
+                      <div style={{ padding: '10px 16px', background: 'rgba(30,79,216,0.06)', borderRadius: 8, fontSize: 13 }}>
+                        <strong>Height:</strong> {profile.height_cm} cm
+                      </div>
+                    )}
+                    {profile?.weight_kg && (
+                      <div style={{ padding: '10px 16px', background: 'rgba(30,79,216,0.06)', borderRadius: 8, fontSize: 13 }}>
+                        <strong>Weight:</strong> {profile.weight_kg} kg
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mini Chart */}
+                  {scores.length > 1 && (
+                    <svg viewBox="0 0 500 120" style={{ width: '100%', height: 120, marginBottom: 16 }}>
+                      <rect x="30" y="85" width="450" height="25" fill="rgba(34,197,94,0.08)" rx="2" />
+                      <rect x="30" y="45" width="450" height="40" fill="rgba(245,158,11,0.08)" rx="2" />
+                      <rect x="30" y="5" width="450" height="40" fill="rgba(239,68,68,0.08)" rx="2" />
+                      {(() => {
+                        const pts = scores.map((v, i) => ({ x: 40 + (i / (scores.length - 1)) * 440, y: 105 - (v / 35) * 100 }));
+                        const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+                        return (
+                          <>
+                            <path d={path} fill="none" stroke="#1E4FD8" strokeWidth="2" strokeLinecap="round" />
+                            {pts.map((p, i) => (
+                              <g key={i}>
+                                <circle cx={p.x} cy={p.y} r="4" fill="white" stroke="#1E4FD8" strokeWidth="2" />
+                                <text x={p.x} y={p.y - 8} fontSize="9" textAnchor="middle" fill="var(--navy)" fontWeight="600">{scores[i]}</text>
+                              </g>
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  )}
+
+                  {/* Assessment Table */}
+                  <table className="history-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>IPSS Score</th>
+                        <th>Severity</th>
+                        <th>QoL</th>
+                        <th>Pathway</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assessments.map((h, i) => (
+                        <tr key={i}>
+                          <td>{h.date}</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{h.score}</td>
+                          <td><span className={`severity-pill ${h.severity}`}>● {h.severity}</span></td>
+                          <td>{h.qol}</td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {h.severity === 'severe' ? 'TURP / HoLEP / Aquablation' : h.severity === 'moderate' ? 'UroLift / Rezum / 5-ARI' : 'Watchful Waiting / Alpha-Blockers'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ marginTop: 24 }}>
-        <div className="card-title">Complete Assessment Log</div>
-        <div className="card-sub">All historical IPSS evaluations with QoL scores</div>
-        <table className="history-table">
-          <thead>
-            <tr>
-              <th>Assessment Date</th>
-              <th>IPSS Score</th>
-              <th>Severity</th>
-              <th>QoL Response</th>
-              <th>Recommended Pathway</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((h, i) => (
-              <tr key={i}>
-                <td>{h.date}</td>
-                <td style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 15 }}>{h.score}</td>
-                <td><span className={`severity-pill ${h.severity}`}>● {h.severity}</span></td>
-                <td>{h.qol}</td>
-                <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {h.severity === "severe" ? "TURP / HoLEP / Aquablation" : h.severity === "moderate" ? "UroLift / Rezum / 5-ARI" : "Watchful Waiting / Alpha-Blockers"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          );
+        })}
       </div>
     </div>
   );
@@ -2316,6 +2366,7 @@ export default function App() {
       if (!error && data) {
         const formatted = data.map(row => ({
           id: row.id,
+          user_id: row.user_id,
           score: row.total_score,
           severity: row.severity.toLowerCase(),
           qol: ['Delighted', 'Pleased', 'Mostly satisfied', 'Mixed', 'Mostly dissatisfied', 'Unhappy', 'Terrible'][row.q8_quality_of_life] || "Mixed",
@@ -2460,7 +2511,7 @@ export default function App() {
 
   // Doctors and Admins get exclusive access to Analytical Reports, NO ASSESSMENTS OR BOTS.
   if (user?.role === "doctor" || user?.role === "admin") {
-    NAV.push({ id: "analytics", label: "Global Analytics", icon: "📈", section: "reports" });
+    NAV.push({ id: "analytics", label: "Patient Analytics", icon: "📈", section: "reports" });
   }
 
   // Everyone gets the robust explicit access management dashboard
@@ -2472,7 +2523,7 @@ export default function App() {
     treatments: { title: "Treatment Pathways", sub: "Evidence-based MIST recommendations" },
     chatbot: { title: "AI Patient Support", sub: "MIST-AI powered BPH assistance" },
     profile: { title: "Patient Profile", sub: "Your clinical details and demographics" },
-    analytics: { title: "Global Analytics", sub: "Longitudinal symptom analysis suite" },
+    analytics: { title: "Patient Analytics", sub: "Longitudinal symptom analysis suite" },
     access: { title: "Access Management", sub: "Control medical data permissions securely" },
     schema: { title: "Database Schema", sub: "PostgreSQL migration and schema viewer" },
   };
